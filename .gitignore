@@ -1,0 +1,15 @@
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+*.log
+
+# mac/win
+.DS_Store
+Thumbs.db
+
+# credentials
+*.json
+service-account.json
