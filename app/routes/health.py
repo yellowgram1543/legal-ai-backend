@@ -1,8 +1,17 @@
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 router = APIRouter(tags=["system"])
 
 
-@router.get("/health")
+class HealthResponse(BaseModel):
+    status: str
+
+
+@router.get("/health", response_model=HealthResponse)
 def health():
-    return {"status": "ok"}
+    """
+    Endpoint to verify service status.
+    Returns a 'healthy' status message if the service is running.
+    """
+    return {"status": "healthy"}

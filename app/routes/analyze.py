@@ -1,42 +1,42 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from typing import List
 
 router = APIRouter(tags=["analysis"])
 
 
-# Input model
 class AnalyzeInput(BaseModel):
     file_id: str
 
 
-# Output model
 class AnalyzeOutput(BaseModel):
     summary: str
-    pros: list
-    cons: list
-    loopholes: list
+    pros: List[str]
+    cons: List[str]
+    loopholes: List[str]
 
 
-# Dummy in-memory "file database"
-file_data = {
-    "file123": {
-        "summary": "This is a summary of the document.",
-        "pros": ["Clear terms and conditions", "Well-defined responsibilities"],
-        "cons": ["Complex language", "Ambiguous timelines"],
-        "loopholes": ["No penalty for non-compliance"],
-    }
+# Dummy response for a known file ID
+dummy_analysis = {
+    "summary": "This is a summary of the document.",
+    "pros": ["Pro 1", "Pro 2"],
+    "cons": ["Con 1", "Con 2"],
+    "loopholes": ["Loophole 1", "Loophole 2"],
 }
 
 
 @router.post("/analyze", response_model=AnalyzeOutput)
 def analyze_document(input: AnalyzeInput):
     """
-    Analyze a document based on a given file ID.
-    Returns a summary, pros, cons, and loopholes in the document.
-    """
-    # Lookup the file in the dummy database
-    analysis = file_data.get(input.file_id)
-    if not analysis:
-        raise HTTPException(status_code=404, detail="File not found")
+    Analyzes a previously uploaded document.
 
-    return analysis
+    - **file_id**: The unique identifier of the file to analyze.
+
+    Returns a structured analysis of the document, including a summary,
+    a list of pros, a list of cons, and any identified loopholes.
+    """
+    # For now, we'll return a dummy response if the file_id is known
+    if input.file_id == "123abc":
+        return dummy_analysis
+    else:
+        raise HTTPException(status_code=404, detail="File not found")

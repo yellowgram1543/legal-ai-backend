@@ -1,19 +1,20 @@
 from fastapi import APIRouter, File, UploadFile
 from pydantic import BaseModel
+import uuid
 
 router = APIRouter(tags=["document processing"])
 
 
-class ProcessDocumentResponse(BaseModel):
-    doc_id: str
-    message: str
+class UploadResponse(BaseModel):
+    file_id: str
 
 
-@router.post("/process-document", response_model=ProcessDocumentResponse)
-def process_document(file: UploadFile = File(...)):
+@router.post("/upload", response_model=UploadResponse)
+def upload_document(file: UploadFile = File(...)):
     """
-    Endpoint to upload a PDF document and process it.
-    Currently stubbed to only return a dummy response.
+    Endpoint to upload a document (PDF or DOCX).
+    Accepts a multipart file upload and returns a unique file ID.
     """
-    # For now, return a dummy response
-    return {"doc_id": "dummy_doc_id", "message": "Document processing started."}
+    # Generate a dummy file ID
+    file_id = str(uuid.uuid4())
+    return {"file_id": file_id}
