@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from google.cloud import storage
 from app.core.config import RAW_BUCKET
 import uuid
+import os
 
 router = APIRouter(tags=["document processing"]) 
 
@@ -17,7 +18,8 @@ def upload_document(file: UploadFile = File(...)):
     """
     Upload a document to Google Cloud Storage raw bucket.
     - Generates a unique doc_id (UUID4)
-    - Uploads the file content to GCS bucket named RAW_BUCKET with blob name = doc_id
+    - Keeps original extension (.pdf/.docx)
+    - Uploads to bucket RAW_BUCKET under prefix raw/
     - Returns JSON with doc_id and initial status="processing"
     """
     try:
@@ -26,6 +28,13 @@ def upload_document(file: UploadFile = File(...)):
 
         # Generate UUID doc_id
         doc_id = str(uuid.uuid4())
+
+        # Derive original extension (including the dot). If none, keep empty string.
+        _, ext = os.path.splitext(file.filename)
+        ext = (ext or "").lower()
+
+        # Build GCS blob path: raw/{doc_id}{ext}
+        blob_name = f"raw/{doc_id}{ext}"
 
         # Read bytes from the uploaded file (sync context)
         # UploadFile.file is a SpooledTemporaryFile; use .read() directly
@@ -36,7 +45,7 @@ def upload_document(file: UploadFile = File(...)):
         # Initialize storage client (uses GOOGLE_APPLICATION_CREDENTIALS or env-based auth)
         client = storage.Client()
         bucket = client.bucket(RAW_BUCKET)
-        blob = bucket.blob(doc_id)
+        blob = bucket.blob(blob_name)
 
         # Try to guess content type from the uploaded file
         content_type = file.content_type or "application/octet-stream"
@@ -44,7 +53,7 @@ def upload_document(file: UploadFile = File(...)):
         # Upload from memory
         blob.upload_from_string(content, content_type=content_type)
 
-        return {"doc_id": doc_id, "status": "processing"}
+        return {"doc_id": f"{doc_id}{ext}", "status": "processing"}
     except HTTPException:
         # re-raise expected HTTP errors
         raise
