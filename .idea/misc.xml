@@ -3,4 +3,5 @@
   <component name="Black">
     <option name="sdkName" value="Python 3.13 (legal-doc-analyzer-backend)" />
   </component>
+  <component name="ProjectRootManager" version="2" project-jdk-name="Python 3.13 (legal-ai-backend)" project-jdk-type="Python SDK" />
 </project>
