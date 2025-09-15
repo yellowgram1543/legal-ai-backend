@@ -1,207 +1,157 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from typing import List, Any, Dict
-
+from typing import Any, Dict, List
 import json
 import os
 import re
+import sys
 import requests
+from google.cloud import documentai, storage
 from google.oauth2 import service_account
 from google.auth.transport.requests import Request
 
-from app.core.config import PROJECT_ID, LOCATION, MODEL_ID, GEMINI_KEY
+from app.core.config import (
+    PROJECT_ID, LOCATION, MODEL_ID, GEMINI_KEY, RAW_BUCKET, PROCESSOR_ID, DOC_AI_KEY
+)
 
-router = APIRouter(tags=["analysis"]) 
-
-
-class AnalyzeInput(BaseModel):
-    file_id: str
-
-
-class AnalyzeOutput(BaseModel):
-    summary: str
-    pros: List[str]
-    cons: List[str]
-    loopholes: List[str]
-
-
+# --- 1. AUTHENTICATION AND CONFIGURATION ---
 def _get_access_token() -> str:
-    """Obtain an OAuth2 access token using the GEMINI_KEY service account JSON."""
-    if not GEMINI_KEY or not os.path.exists(GEMINI_KEY):
-        raise RuntimeError("GEMINI_KEY not configured or file not found")
+    """Obtain an OAuth2 access token for Vertex AI."""
     creds = service_account.Credentials.from_service_account_file(
         GEMINI_KEY, scopes=["https://www.googleapis.com/auth/cloud-platform"]
     )
-    creds.refresh(Request())
+    if not creds.valid:
+        creds.refresh(Request())
     return creds.token
 
+def _init_storage_client() -> storage.Client:
+    """Initialize a GCS storage client."""
+    creds = service_account.Credentials.from_service_account_file(DOC_AI_KEY)
+    return storage.Client(project=PROJECT_ID, credentials=creds)
 
-def _extract_json(text: str) -> Dict[str, Any]:
-    """Try to parse JSON from a model text. Attempts direct parse, fenced blocks, and braces extraction."""
-    if not text:
-        return {}
+def _init_docai_client() -> documentai.DocumentProcessorServiceClient:
+    """Initialize the Document AI client."""
+    opts = {"api_endpoint": f"{LOCATION}-documentai.googleapis.com"}
+    creds = service_account.Credentials.from_service_account_file(DOC_AI_KEY)
+    return documentai.DocumentProcessorServiceClient(client_options=opts, credentials=creds)
 
-    # Direct attempt
-    try:
-        return json.loads(text)
-    except Exception:
-        pass
+# --- 2. DOCUMENT AI TEXT EXTRACTION ---
+def extract_text_with_docai(bucket: str, file_name: str, mime_type: str) -> str:
+    """Process a document with Document AI to extract text."""
+    print(f"[INFO] Starting Document AI processing for gs://{bucket}/{file_name}", file=sys.stderr)
+    docai_client = _init_docai_client()
 
-    # Look for fenced code blocks ```json ... ``` or ``` ... ```
-    fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text, re.IGNORECASE)
-    if fence_match:
-        fenced = fence_match.group(1).strip()
-        try:
-            return json.loads(fenced)
-        except Exception:
-            pass
-
-    # Extract first {...} block heuristically (handles nested braces poorly but works often)
-    brace_start = text.find("{")
-    brace_end = text.rfind("}")
-    if brace_start != -1 and brace_end != -1 and brace_end > brace_start:
-        candidate = text[brace_start: brace_end + 1]
-        try:
-            return json.loads(candidate)
-        except Exception:
-            pass
-
-    return {}
-
-
-def _coerce_analysis(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Coerce parsed data into the required schema with defaults and type conversions."""
-    def to_list(value: Any) -> List[str]:
-        if value is None:
-            return []
-        if isinstance(value, list):
-            return [str(x).strip() for x in value if str(x).strip()]
-        # If it's a string with bullets or commas, split
-        if isinstance(value, str):
-            # split on newlines or commas or semicolons
-            parts = re.split(r"[\n,;]+", value)
-            return [p.strip(" -•\t").strip() for p in parts if p.strip()]
-        # Fallback single item list
-        return [str(value)]
-
-    summary = data.get("summary")
-    if not isinstance(summary, str):
-        # Try to synthesize a summary from any available field
-        if isinstance(summary, (list, dict)):
-            summary = json.dumps(summary)[:500]
-        else:
-            summary = ""
-
-    result = {
-        "summary": summary.strip(),
-        "pros": to_list(data.get("pros")),
-        "cons": to_list(data.get("cons")),
-        "loopholes": to_list(data.get("loopholes")),
-    }
-
-    # Ensure keys exist
-    for k in ("summary", "pros", "cons", "loopholes"):
-        result.setdefault(k, [] if k != "summary" else "")
-    return result
-
-
-def analyze_text(text: str) -> Dict[str, Any]:
-    """
-    Use Vertex AI Gemini to analyze the input text and return a structured dict
-    with keys: summary, pros, cons, loopholes. Ensures valid JSON output.
-    """
-    if not text or not text.strip():
-        return {"summary": "", "pros": [], "cons": [], "loopholes": []}
-
-    token = _get_access_token()
-    url = (
-        f"https://{LOCATION}-aiplatform.googleapis.com/v1/"
-        f"projects/{PROJECT_ID}/locations/{LOCATION}/publishers/google/models/{MODEL_ID}:generateContent"
+    resource_name = docai_client.processor_path(PROJECT_ID, LOCATION, PROCESSOR_ID)
+    gcs_document = documentai.GcsDocument(gcs_uri=f"gs://{bucket}/{file_name}", mime_type=mime_type)
+    request = documentai.ProcessRequest(
+        name=resource_name,
+        gcs_document=gcs_document,
+        skip_human_review=True
     )
 
+    try:
+        result = docai_client.process_document(request=request)
+        print("[OK] Document AI processing successful.", file=sys.stderr)
+        return result.document.text
+    except Exception as e:
+        print(f"[ERROR] Document AI processing failed: {e}", file=sys.stderr)
+        raise RuntimeError(f"Failed to process document with Document AI: {e}")
+
+# --- 3. GEMINI ANALYSIS ---
+def analyze_text(text: str) -> Dict[str, Any]:
+    """Use Vertex AI Gemini to analyze text and return structured JSON."""
+    # This function remains largely the same as before, focusing on analysis
+    if not text or not text.strip():
+        return {"summary": "Document is empty.", "pros": [], "cons": [], "loopholes": []}
+
+    token = _get_access_token()
+    url = f"https://{LOCATION}-aiplatform.googleapis.com/v1/projects/{PROJECT_ID}/locations/{LOCATION}/publishers/google/models/{MODEL_ID}:generateContent"
+    
     system_prompt = (
         "You are a legal document analysis assistant. Analyze the user's document and respond strictly in JSON. "
-        "JSON schema: {\"summary\": string, \"pros\": string[], \"cons\": string[], \"loopholes\": string[]}. "
-        "Do not include any extra commentary or code fences."
+        "The JSON schema must be: {\"summary\": string, \"pros\": string[], \"cons\": string[], \"loopholes\": string[]}. "
+        "Do not include any extra commentary, explanations, or markdown fences. Just the JSON object."
     )
 
     payload = {
-        "contents": [
-            {"role": "user", "parts": [{"text": system_prompt + "\n\nDocument:\n" + text[:20000]}]},
-        ],
-        "generationConfig": {
-            "temperature": 0.2,
-            "maxOutputTokens": 1024,
-            "responseMimeType": "application/json"
-        }
+        "contents": [{"role": "user", "parts": [{"text": system_prompt + "\n\nDocument:\n" + text[:25000]}]}],
+        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 4096, "responseMimeType": "application/json"}
     }
-
-    headers = {"Authorization": f"Bearer {token}"}
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
     try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=60)
+        resp = requests.post(url, headers=headers, json=payload, timeout=120)
         resp.raise_for_status()
-    except requests.RequestException as e:
-        # On API failure, return empty structured response
-        return {"summary": "", "pros": [], "cons": [], "loopholes": []}
+        response_data = resp.json()
+        text_out = response_data["candidates"][0]["content"]["parts"][0]["text"]
+        # The response should be clean JSON due to responseMimeType, but we can still parse it robustly
+        return json.loads(text_out)
+    except (requests.RequestException, KeyError, IndexError, json.JSONDecodeError) as e:
+        print(f"[ERROR] Gemini analysis or parsing failed: {e}", file=sys.stderr)
+        return {"summary": "Failed to analyze document.", "pros": [], "cons": [], "loopholes": []}
 
-    data = resp.json()
-
-    # Vertex response can have candidates[0].content.parts[0].text or promptFeedback
-    text_out = None
+# --- 4. SAVE AND UPDATE STATUS ---
+def _save_analysis_to_gcs(storage_client: storage.Client, doc_id: str, analysis_data: Dict[str, Any]):
+    """Save the structured analysis JSON to the processed/ bucket."""
+    bucket = storage_client.bucket(RAW_BUCKET)
+    blob_name = f"processed/{doc_id}.json"
+    blob = bucket.blob(blob_name)
+    
     try:
-        candidates = data.get("candidates") or []
-        if candidates:
-            parts = candidates[0].get("content", {}).get("parts", [])
-            if parts:
-                text_out = parts[0].get("text")
-        if not text_out:
-            # Some versions use output[0].content[0].text
-            outputs = data.get("output") or []
-            if outputs and isinstance(outputs, list):
-                text_out = outputs[0]
-    except Exception:
-        text_out = None
-
-    parsed = _extract_json(text_out or "")
-    coerced = _coerce_analysis(parsed)
-    return coerced
-
-
-# Attempt to import an external document retrieval function if present
-try:
-    # e.g., from app.services.documents import get_document_text
-    from app.services.documents import get_document_text  # type: ignore
-except Exception:
-    # Fallback local stub for development/testing
-    def get_document_text(file_id: str) -> str:
-        if file_id == "123abc":
-            return "This is a sample legal agreement between two parties covering terms, obligations, and liabilities."
-        raise LookupError("Document not found")
-
-
-@router.post("/analyze", response_model=AnalyzeOutput)
-def analyze_document(input: AnalyzeInput):
-    """
-    Analyzes a previously uploaded document.
-
-    - **file_id**: The unique identifier of the file to analyze.
-
-    Returns a structured analysis of the document, including a summary,
-    a list of pros, a list of cons, and any identified loopholes.
-    """
-    try:
-        text = get_document_text(input.file_id)
-    except LookupError:
-        raise HTTPException(status_code=404, detail="File not there.")
+        blob.upload_from_string(
+            data=json.dumps(analysis_data, indent=2),
+            content_type="application/json"
+        )
+        print(f"[OK] Analysis saved to gs://{RAW_BUCKET}/{blob_name}", file=sys.stderr)
     except Exception as e:
-        # Unexpected backend error
-        raise HTTPException(status_code=500, detail=f"Failed to read document: {e}")
+        print(f"[ERROR] Failed to save analysis to GCS: {e}", file=sys.stderr)
+
+def _update_status_in_db(doc_id: str, status: str):
+    """
+    Placeholder function to update the document status in a database.
+    Replace this with your actual database logic (e.g., SQL, NoSQL).
+    """
+    print(f"[INFO] DB: Updating status for doc_id '{doc_id}' to '{status}'.", file=sys.stderr)
+    # Example database logic:
+    # with get_db_connection() as conn:
+    #     cursor = conn.cursor()
+    #     cursor.execute("UPDATE documents SET status = %s WHERE id = %s", (status, doc_id))
+    #     conn.commit()
+    pass
+
+# --- 5. MAIN BACKGROUND TASK ORCHESTRATOR ---
+def trigger_analysis(doc_id_with_ext: str, mime_type: str):
+    """
+    The main background task to orchestrate the analysis workflow.
+    1. Extracts text using Document AI.
+    2. Analyzes text with Gemini.
+    3. Saves the result to GCS.
+    4. Updates the status in the database.
+    """
+    doc_id, _ = os.path.splitext(doc_id_with_ext)
+    raw_file_name = f"raw/{doc_id_with_ext}"
+    print(f"--- Starting background analysis for doc_id: {doc_id} ---", file=sys.stderr)
 
     try:
-        result = analyze_text(text)
-    except Exception as e:
-        # If analysis fails, return a structured empty response rather than 500
-        result = {"summary": "", "pros": [], "cons": [], "loopholes": []}
+        # Step 1: Extract text with Document AI
+        _update_status_in_db(doc_id, "extracting_text")
+        extracted_text = extract_text_with_docai(RAW_BUCKET, raw_file_name, mime_type)
 
-    return result
+        if not extracted_text:
+            print("[WARN] Text extraction yielded no content. Aborting analysis.", file=sys.stderr)
+            _update_status_in_db(doc_id, "error_empty_document")
+            return
+
+        # Step 2: Analyze text with Gemini
+        _update_status_in_db(doc_id, "analyzing")
+        analysis_result = analyze_text(extracted_text)
+
+        # Step 3: Save the structured JSON output to GCS
+        storage_client = _init_storage_client()
+        _save_analysis_to_gcs(storage_client, doc_id, analysis_result)
+
+        # Step 4: Update the document's status to 'processed'
+        _update_status_in_db(doc_id, "processed")
+        print(f"--- Background analysis for doc_id: {doc_id} complete. ---", file=sys.stderr)
+
+    except Exception as e:
+        print(f"[FATAL] An error occurred during the background analysis for {doc_id}: {e}", file=sys.stderr)
+        _update_status_in_db(doc_id, "error_processing_failed")
