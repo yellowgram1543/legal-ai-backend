@@ -1,15 +1,25 @@
-# python
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 .venv/
 venv/
 .env
 *.log
 
-# mac/win
+# OS-specific files
 .DS_Store
 Thumbs.db
 
-# credentials
+# Virtual environments
+.env/
+.venv/
+
+# Credentials / Secrets
 *.json
+*.pem
+*.key
+*.crt
 service-account.json
+keys/
