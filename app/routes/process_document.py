@@ -19,8 +19,7 @@ def upload_document(file: UploadFile = File(...)):
     """
     Upload a document to Google Cloud Storage raw bucket.
     - Generates a unique doc_id (UUID4)
-    - Keeps original extension (.pdf/.docx)
-    - Uploads to bucket RAW_BUCKET under prefix raw/
+    - Uploads to bucket RAW_BUCKET under prefix raw/ using the doc_id as filename
     - Returns JSON with doc_id and initial status="processing"
     """
     try:
@@ -30,12 +29,8 @@ def upload_document(file: UploadFile = File(...)):
         # Generate UUID doc_id
         doc_id = str(uuid.uuid4())
 
-        # Derive original extension (including the dot). If none, keep empty string.
-        _, ext = os.path.splitext(file.filename)
-        ext = (ext or "").lower()
-
-        # Build GCS blob path: raw/{doc_id}{ext}
-        blob_name = f"raw/{doc_id}{ext}"
+        # Build GCS blob path: raw/{doc_id}
+        blob_name = f"raw/{doc_id}"
 
         # Read bytes from the uploaded file (sync context)
         # UploadFile.file is a SpooledTemporaryFile; use .read() directly
@@ -62,7 +57,7 @@ def upload_document(file: UploadFile = File(...)):
         # Upload from memory
         blob.upload_from_string(content, content_type=content_type)
 
-        return {"doc_id": doc_id, "status": "processing"}
+        return UploadResponse(doc_id=doc_id, status="processing")
     except HTTPException:
         # re-raise expected HTTP errors
         raise

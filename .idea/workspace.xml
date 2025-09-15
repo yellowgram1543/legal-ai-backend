@@ -4,10 +4,8 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="cd336d4a-aeec-4fa1-86c3-a9d45a8c604d" name="Changes" comment="updated config with gemini key">
-      <change afterPath="$PROJECT_DIR$/tests/test_gemini_sdk.py" afterDir="false" />
+    <list default="true" id="cd336d4a-aeec-4fa1-86c3-a9d45a8c604d" name="Changes" comment="updated new files">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/routes/analyze.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/routes/analyze.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/app/routes/process_document.py" beforeDir="false" afterPath="$PROJECT_DIR$/app/routes/process_document.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -112,7 +110,15 @@
       <option name="project" value="LOCAL" />
       <updated>1757918128681</updated>
     </task>
-    <option name="localTasksCounter" value="5" />
+    <task id="LOCAL-00005" summary="updated new files">
+      <option name="closed" value="true" />
+      <created>1757930804284</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1757930804284</updated>
+    </task>
+    <option name="localTasksCounter" value="6" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -131,6 +137,7 @@
     <MESSAGE value=" perform \upload logic" />
     <MESSAGE value="updated \upload logic" />
     <MESSAGE value="updated config with gemini key" />
-    <option name="LAST_COMMIT_MESSAGE" value="updated config with gemini key" />
+    <MESSAGE value="updated new files" />
+    <option name="LAST_COMMIT_MESSAGE" value="updated new files" />
   </component>
 </project>
