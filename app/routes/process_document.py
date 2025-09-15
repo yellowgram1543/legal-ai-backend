@@ -1,11 +1,12 @@
 from fastapi import APIRouter, File, UploadFile, HTTPException
 from pydantic import BaseModel
 from google.cloud import storage
-from app.core.config import RAW_BUCKET
+from google.oauth2 import service_account
+from app.core.config import RAW_BUCKET, DOC_AI_KEY, PROJECT_ID
 import uuid
 import os
 
-router = APIRouter(tags=["document processing"]) 
+router = APIRouter(tags=["document processing"])
 
 
 class UploadResponse(BaseModel):
@@ -42,8 +43,16 @@ def upload_document(file: UploadFile = File(...)):
         if content is None or len(content) == 0:
             raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
-        # Initialize storage client (uses GOOGLE_APPLICATION_CREDENTIALS or env-based auth)
-        client = storage.Client()
+        # Initialize storage client using DOC_AI_KEY credentials if provided
+        try:
+            if DOC_AI_KEY and os.path.exists(DOC_AI_KEY):
+                creds = service_account.Credentials.from_service_account_file(DOC_AI_KEY)
+                client = storage.Client(project=PROJECT_ID, credentials=creds)
+            else:
+                client = storage.Client(project=PROJECT_ID)
+        except Exception as auth_err:
+            raise HTTPException(status_code=500, detail=f"Auth setup failed: {auth_err}")
+
         bucket = client.bucket(RAW_BUCKET)
         blob = bucket.blob(blob_name)
 
@@ -53,7 +62,7 @@ def upload_document(file: UploadFile = File(...)):
         # Upload from memory
         blob.upload_from_string(content, content_type=content_type)
 
-        return {"doc_id": f"{doc_id}{ext}", "status": "processing"}
+        return {"doc_id": doc_id, "status": "processing"}
     except HTTPException:
         # re-raise expected HTTP errors
         raise
